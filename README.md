@@ -1,0 +1,230 @@
+# AI DevOps Incident Response System
+
+An autonomous AI-powered incident response platform for AWS EKS. Ingests alerts from SigNoz, reasons over context using LangGraph, executes remediations via MCP tools, and keeps engineers in the loop through a real-time approval dashboard — built entirely on open-source tooling.
+
+---
+
+## Architecture Overview
+
+```mermaid
+flowchart TD
+  subgraph SIG["📡  Signal Ingestion"]
+    direction LR
+    SNZ["📊 SigNoz\nAlert webhooks · EKS metrics · logs · traces"]
+  end
+
+  subgraph GUARD["🛡️  NeMo Guardrails Boundary"]
+    direction LR
+    ING["📥 Ingestion API\nFastAPI · Redis queue"]
+    NEMO["🛡️ NeMo Guardrails\nInput rails · PII redact · Output validation"]
+    LG["🤖 LangGraph\nAI orchestration agent"]
+    GW["⚡ LiteLLM Gateway\nMulti-model · fallback · cost routing"]
+    RAG["🧠 RAG Pipeline\nWeaviate · Runbook & incident embeddings"]
+  end
+
+  subgraph MCP["🔌  MCP Server Layer  —  mTLS · OAuth2 · Audit log"]
+    direction LR
+    K8S["☸️ K8s MCP\nPod ops · scale · rollback"]
+    SNZMCP["📊 SigNoz MCP\nQuery metrics · fetch alerts · traces"]
+    SLMCP["💬 Slack MCP\nPost · thread · channel"]
+    NTMCP["📧 Notify MCP\nEmail · IR report"]
+  end
+
+  subgraph HITL["👤  Human-in-the-Loop Approval Gate"]
+    direction LR
+    HUMAN["👤 On-call Engineer"]
+    DASH["🖥️ Operator Dashboard\nNext.js · WebSocket · Approve / Reject"]
+    APW["⚙️ Approval Workflow\nFastAPI · Postgres · Redis · audit trail"]
+    RISK["⚠️ Risk Gate\n🟢 Low → auto · 🟡 Med → notify · 🔴 High → block"]
+  end
+
+  subgraph OBS["📈  Observability Stack"]
+    direction LR
+    SIGOBS["📊 SigNoz\nMetrics · traces · logs · errors · dashboards"]
+    EVAL["🧪 DeepEval\nRAG eval · faithfulness CI/CD"]
+  end
+
+  subgraph OUT["📤  Incident Outputs"]
+    direction LR
+    SLACK["💬 Slack\nRich incident thread"]
+    EMAIL["📧 Email Report\nRoot cause · timeline"]
+    REMED["🔧 Auto-Remediation\nRollback · restart · scale"]
+    IRDOC["📄 IR Document\nMarkdown · PDF · S3"]
+  end
+
+  SNZ --> ING
+  ING --> NEMO
+  NEMO --> LG
+  LG <--> GW
+  LG --> RAG
+  RAG --> LG
+
+  LG --> K8S
+  LG --> SNZMCP
+  LG --> SLMCP
+  LG --> NTMCP
+
+  LG -->|"requires_approval: true"| DASH
+  HUMAN --> DASH
+  DASH --> APW
+  APW --> RISK
+  RISK -->|"approved"| K8S
+
+  K8S --> REMED
+  SLMCP --> SLACK
+  NTMCP --> EMAIL
+  NTMCP --> IRDOC
+
+  LG -.->|"OTel spans · metrics · errors"| SIGOBS
+  LG -.->|"eval traces"| EVAL
+
+  style SIG fill:#E6F1FB,stroke:#185FA5,color:#0C447C
+  style GUARD fill:#FAEEDA,stroke:#854F0B,color:#412402
+  style MCP fill:#F1EFE8,stroke:#5F5E5A,color:#2C2C2A
+  style HITL fill:#EAF3DE,stroke:#3B6D11,color:#173404
+  style OBS fill:#FAECE7,stroke:#993C1D,color:#4A1B0C
+  style OUT fill:#E1F5EE,stroke:#0F6E56,color:#04342C
+```
+
+---
+
+## Tech Stack
+
+| Layer | Technology | Purpose |
+|---|---|---|
+| **Ingestion** | FastAPI + Redis | Alert queue and ingestion API |
+| **Guardrails** | NVIDIA NeMo Guardrails | Input/output safety, PII redaction, hallucination filtering |
+| **AI Agent** | LangGraph | Stateful AI orchestration and decision-making |
+| **LLM Gateway** | LiteLLM | Multi-model routing, fallback, and cost management |
+| **Vector Store** | Weaviate | Runbook and past incident embeddings for RAG |
+| **MCP Transport** | mTLS + OAuth2 | Secure tool invocation with signed manifests and audit log |
+| **Kubernetes** | K8s MCP | Pod ops, scaling, rollback on AWS EKS |
+| **Observability** | SigNoz | Metrics, traces, logs, errors — single unified platform |
+| **LLM Eval** | DeepEval | RAG faithfulness and retrieval quality gating in CI/CD |
+| **Dashboard** | Next.js + WebSocket | Real-time operator UI for approvals and incident review |
+| **Workflow** | FastAPI + Postgres + Redis | Approval state machine with timeout escalation and audit trail |
+| **Notifications** | Slack + Email | Incident communication via Slack threads and email reports |
+| **IR Artifacts** | Markdown + PDF + S3 | Archived incident reports with root cause and timeline |
+
+---
+
+## Why This Stack
+
+| Decision | Reasoning |
+|---|---|
+| **SigNoz over Prometheus + Grafana + Sentry** | One tool replaces three — metrics, traces, logs, and errors in a single UI. OpenTelemetry native, self-hostable on EKS. |
+| **LiteLLM over PortKey** | Single LLM gateway, open-source, supports fallback and cost routing across all major providers. |
+| **Weaviate over pgvector** | Purpose-built vector database, better performance at scale, richer query capabilities for RAG. |
+| **LangGraph over CrewAI** | Single agent framework, stateful graph execution, cleaner for complex incident workflows. |
+| **No PagerDuty** | The Operator Dashboard + Slack notifications replaces on-call paging. Engineers act through the dashboard directly. |
+
+---
+
+## How It Works
+
+### 1. Signal Ingestion
+SigNoz monitors the entire AWS EKS cluster via an OpenTelemetry Collector deployed as a DaemonSet. It captures pod crashes, OOM kills, node pressure, app errors, latency spikes, and custom metrics. When an alert threshold is breached, SigNoz fires a webhook to the FastAPI ingestion API, which queues it in Redis.
+
+### 2. NeMo Guardrails Boundary
+Every alert passes through NVIDIA NeMo Guardrails before reaching the AI agent. This layer enforces input safety rails, strips PII, validates LLM outputs, and filters hallucinations — ensuring the agent only acts on clean, safe context.
+
+### 3. LangGraph AI Agent
+LangGraph drives the core orchestration as a stateful graph. The agent:
+- Queries **Weaviate** for relevant runbooks and similar past incidents (RAG)
+- Routes LLM calls through **LiteLLM** for model flexibility and cost control
+- Decides which MCP tools to invoke based on incident context
+- Flags high-risk actions for human approval
+
+### 4. MCP Server Layer
+All tool calls are executed through MCP servers secured with mTLS, OAuth2, and signed manifests. Every invocation is written to an audit log. Available tools:
+- **K8s MCP** — list pods, get logs, restart, scale, rollback on EKS
+- **SigNoz MCP** — query metrics, fetch firing alerts, pull traces
+- **Slack MCP** — post incident threads, update channels
+- **Notify MCP** — send emails, generate IR reports
+
+### 5. Human-in-the-Loop Approval Gate
+The Risk Gate classifies every proposed action:
+- 🟢 **Low risk** — executed automatically
+- 🟡 **Medium risk** — engineer notified via Slack, can approve or modify
+- 🔴 **High risk** — blocked until explicit approval via the Operator Dashboard
+
+The Operator Dashboard (Next.js + WebSocket) presents the incident card, evidence, and proposed actions in real time. The approval workflow uses Postgres for state persistence and Redis for timeouts, with full audit trail. Unanswered approvals auto-escalate.
+
+### 6. Observability
+SigNoz receives OpenTelemetry spans from every LangGraph step and MCP tool call, giving full end-to-end visibility into agent decisions and tool executions. DeepEval gates RAG quality in CI/CD pipelines.
+
+### 7. Incident Outputs
+Resolved incidents produce:
+- Slack thread with rich Block Kit formatting
+- Email report with root cause, timeline, MTTD/MTTR
+- Auto-remediation actions (rollback, restart, scale, cordon) on EKS
+- Archived IR document (Markdown + PDF) stored in S3
+
+---
+
+## Design Principles
+
+- **Open-source only** — SigNoz, Weaviate, LiteLLM, LangGraph, NeMo, DeepEval — zero proprietary SaaS dependencies
+- **Single tool per job** — no overlapping tools; one observability platform, one agent framework, one LLM gateway
+- **Human in the loop** — no high-risk action executes without explicit engineer approval
+- **Full auditability** — every LLM call, tool invocation, and approval decision is logged
+- **Guardrails at the boundary** — safety and PII checks happen before the agent sees any data
+- **EKS native** — SigNoz OTel collector runs as a DaemonSet, covers all cluster signals automatically
+
+---
+
+## Getting Started
+
+```bash
+# Clone the repo
+git clone https://github.com/your-org/ai-devops-incident-response
+cd ai-devops-incident-response
+
+# Start infrastructure
+docker compose up -d  # Redis, Postgres, Weaviate, SigNoz
+
+# Install Python dependencies
+pip install -r requirements.txt
+
+# Start the ingestion API
+uvicorn app.main:app --reload
+
+# Start the operator dashboard
+cd dashboard && npm install && npm run dev
+```
+
+---
+
+## Environment Variables
+
+```env
+# LLM
+LITELLM_API_KEY=...
+OPENAI_API_KEY=...
+
+# Weaviate
+WEAVIATE_URL=http://localhost:8080
+
+# Postgres
+DATABASE_URL=postgresql://user:pass@localhost:5432/incidents
+
+# Redis
+REDIS_URL=redis://localhost:6379
+
+# Slack
+SLACK_BOT_TOKEN=xoxb-...
+
+# SigNoz
+SIGNOZ_ENDPOINT=http://localhost:4317
+OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
+
+# AWS EKS
+AWS_REGION=us-east-1
+EKS_CLUSTER_NAME=your-cluster
+```
+
+---
+
+## License
+
+MIT
