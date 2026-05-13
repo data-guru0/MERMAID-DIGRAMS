@@ -1,6 +1,6 @@
 # AI DevOps Incident Response System
 
-An autonomous AI-powered incident response platform for AWS EKS. Ingests alerts from SigNoz, reasons over context using LangGraph, executes remediations via MCP tools, and keeps engineers in the loop through a real-time Reflex approval dashboard — built entirely on open-source tooling.
+An autonomous AI-powered incident response platform for AWS EKS. Ingests alerts from SigNoz, reasons over context using LangGraph, executes remediations via MCP tools, and keeps engineers in the loop through a lightweight FastAPI-served HTML/CSS/JS dashboard with native WebSocket support — built entirely on open-source tooling.
 
 ---
 
@@ -33,7 +33,7 @@ flowchart TD
   subgraph HITL["👤  Human-in-the-Loop Approval Gate"]
     direction LR
     HUMAN["👤 On-call Engineer"]
-    DASH["🖥️ Operator Dashboard\nReflex · WebSocket · Approve / Reject / Abort"]
+    DASH["🖥️ Operator Dashboard\nFastAPI · HTML · CSS · JS · WebSocket"]
     APW["⚙️ Approval Workflow\nFastAPI · Postgres · Redis · audit trail"]
     RISK["⚠️ Risk Gate\n🟢 Low → auto · 🟡 Med → notify · 🔴 High → block"]
   end
@@ -103,7 +103,7 @@ flowchart TD
 | **Metrics Queries** | SigNoz MCP | Query live metrics, fetch firing alerts, pull traces |
 | **Notifications** | Slack MCP | Post incident threads, update channels |
 | **Reporting** | Notify MCP | Send emails, generate IR reports |
-| **Operator Dashboard** | Reflex + WebSocket | Real-time bidirectional incident UI — pure Python, multi-engineer |
+| **Operator Dashboard** | FastAPI + HTML/CSS/JS + WebSocket | Lightweight dashboard served directly by FastAPI, no framework |
 | **Approval Workflow** | FastAPI + Postgres + Redis | Approval state machine, timeout escalation, full audit trail |
 | **Observability** | SigNoz | Metrics, traces, logs, errors — single unified open-source platform |
 | **LLM Eval** | DeepEval | RAG faithfulness and retrieval quality gating in CI/CD |
@@ -121,8 +121,8 @@ flowchart TD
 | Agent Framework | **LangGraph** | Single framework, dropped CrewAI overlap |
 | Signal Source | **SigNoz only** | Covers K8s Events, metrics, logs, errors — no separate sources needed |
 | On-call Paging | **None** | Operator Dashboard + Slack replaces PagerDuty entirely |
-| Frontend | **Reflex** | Pure Python, native WebSocket support, multi-user real-time state |
-| Real-time Protocol | **WebSocket** | Bidirectional — engineers can approve, abort, and modify live remediations |
+| Frontend | **FastAPI + HTML/CSS/JS** | No framework, no build step, no npm — FastAPI serves static files directly |
+| Real-time Protocol | **WebSocket** | Native browser API — bidirectional, instant, zero dependencies |
 
 ---
 
@@ -156,22 +156,20 @@ The Risk Gate classifies every proposed action:
 - 🟡 **Medium risk** — engineer notified via Slack, can review and approve
 - 🔴 **High risk** — blocked until explicit approval via the Operator Dashboard
 
-The **Reflex dashboard** maintains a persistent **WebSocket** connection to the FastAPI backend. This means:
-- New incidents appear instantly on every connected engineer's screen
-- Live remediation status streams in real time — step by step
-- Multiple engineers see the exact same state simultaneously
-- Any engineer can **abort a running remediation mid-execution** and the backend reacts instantly
-- Approval countdown timer is synced across all connected engineers
+The Operator Dashboard is a plain HTML/CSS/JS page served directly by FastAPI via `StaticFiles`. It connects to the FastAPI backend using the **native browser WebSocket API** — no libraries, no framework, no build step required. This gives full bidirectional communication:
 
-The approval workflow uses Postgres for state persistence and Redis for timeout management. Unanswered approvals auto-escalate.
+- New incidents stream to every connected engineer instantly
+- Live remediation progress updates in real time step by step
+- Multiple engineers see the exact same incident state simultaneously
+- Any engineer can abort a running remediation mid-execution instantly
+- Countdown timer is synced across all connected engineers
 
-### 6. Why Reflex over Streamlit
-Streamlit uses WebSockets internally but does not expose them — the only way to get live updates from an external FastAPI backend in Streamlit is polling via `st.rerun()`, which is hacky and slow. Reflex is also pure Python but gives you native WebSocket support, proper multi-user real-time state, and the ability to abort live operations instantly. Still far simpler than Next.js, zero JavaScript required.
+Approve / Reject / Abort actions are sent back to the server over the same WebSocket connection. The approval workflow uses Postgres for state persistence and Redis for timeout management. Unanswered approvals auto-escalate.
 
-### 7. Observability
-SigNoz receives OpenTelemetry spans from every LangGraph step and MCP tool call, giving full end-to-end visibility into agent decisions and tool executions — all in one UI. DeepEval gates RAG retrieval quality in CI/CD pipelines.
+### 6. Observability
+SigNoz receives OpenTelemetry spans from every LangGraph step and MCP tool call, giving full end-to-end visibility into agent decisions and tool executions — metrics, traces, logs, and errors all in one UI. DeepEval gates RAG retrieval quality in CI/CD pipelines.
 
-### 8. Incident Outputs
+### 7. Incident Outputs
 Every resolved incident produces:
 - **Slack thread** — rich incident summary with timeline
 - **Email report** — root cause, actions taken, MTTD/MTTR
